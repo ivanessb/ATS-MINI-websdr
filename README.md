@@ -32,6 +32,14 @@ Manage WiFi networks directly on the radio — no web browser needed.
 
 Access from: **Settings → WiFi Setup**
 
+### Smooth Micro Stepping
+Tuning feels smoother with micro stepping — large frequency steps are broken into smaller incremental moves.
+
+- **SSB**: A 100 Hz step is applied as 10 × 10 Hz micro steps via BFO adjustments
+- **AM/FM**: Similarly subdivided into 1/10th increments
+- Steps animate smoothly when the encoder is idle, or jump instantly during fast rotation
+- No user configuration needed — works automatically with any step size
+
 ## Flashing
 
 Download the firmware binaries from the [Releases](https://github.com/ivanessb/ATS-MINI-websdr/releases) page:
