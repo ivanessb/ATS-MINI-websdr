@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "ms-vscode.cpptools",
+    "vscode-arduino.vscode-arduino-community",
+    "ms-python.python",
+    "ms-python.vscode-pylance"
+  ]
+}

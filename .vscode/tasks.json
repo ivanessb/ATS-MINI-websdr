@@ -1,0 +1,193 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "ATS Mini: Install Arduino dependencies",
+      "type": "shell",
+      "command": "arduino-cli core update-index --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json; arduino-cli core install esp32:esp32@3.3.7 --additional-urls https://espressif.github.io/arduino-esp32/package_esp32_index.json; arduino-cli lib update-index; arduino-cli lib install \"PU2CLR SI4735@2.1.8\" \"TFT_eSPI@2.5.43\" \"Async TCP@3.4.7\" \"ESP Async WebServer@3.7.10\" \"NTPClient@3.2.1\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ATS Mini: List serial ports",
+      "type": "process",
+      "command": "arduino-cli",
+      "args": [
+        "board",
+        "list"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "ATS Mini: Build IntelliSense database",
+      "type": "process",
+      "command": "arduino-cli",
+      "args": [
+        "compile",
+        "--clean",
+        "--only-compilation-database",
+        "--profile",
+        "${input:boardProfile}",
+        "--build-path",
+        "${workspaceFolder}/.arduino/build/current",
+        "--build-property",
+        "compiler.cpp.extra_flags=${input:cppExtraFlags}",
+        "--warnings",
+        "all",
+        "${workspaceFolder}/ats-mini"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "ATS Mini: Build firmware",
+      "type": "process",
+      "command": "arduino-cli",
+      "args": [
+        "compile",
+        "--clean",
+        "--export-binaries",
+        "--profile",
+        "${input:boardProfile}",
+        "--output-dir",
+        "${workspaceFolder}/.arduino/build/current",
+        "--build-property",
+        "compiler.cpp.extra_flags=${input:cppExtraFlags}",
+        "--warnings",
+        "all",
+        "${workspaceFolder}/ats-mini"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "ATS Mini: Upload firmware",
+      "type": "process",
+      "command": "arduino-cli",
+      "args": [
+        "compile",
+        "--clean",
+        "--export-binaries",
+        "--upload",
+        "--port",
+        "${input:serialPort}",
+        "--profile",
+        "${input:boardProfile}",
+        "--output-dir",
+        "${workspaceFolder}/.arduino/build/current",
+        "--build-property",
+        "compiler.cpp.extra_flags=${input:cppExtraFlags}",
+        "--warnings",
+        "all",
+        "${workspaceFolder}/ats-mini"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [
+        "$gcc"
+      ]
+    },
+    {
+      "label": "ATS Mini: Monitor serial",
+      "type": "process",
+      "command": "arduino-cli",
+      "args": [
+        "monitor",
+        "--port",
+        "${input:serialPort}",
+        "--config",
+        "baudrate=115200"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docs: Sync Python tools",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "sync"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docs: Build HTML",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "sphinx-build",
+        "-b",
+        "html",
+        "docs/source",
+        "docs/build/html"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Docs: Live preview",
+      "type": "process",
+      "command": "uv",
+      "args": [
+        "run",
+        "sphinx-autobuild",
+        "docs/source",
+        "docs/build"
+      ],
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "boardProfile",
+      "type": "pickString",
+      "description": "Select the board profile from ats-mini/sketch.yaml",
+      "default": "esp32s3-ospi",
+      "options": [
+        "esp32s3-ospi",
+        "esp32s3-qspi"
+      ]
+    },
+    {
+      "id": "serialPort",
+      "type": "promptString",
+      "description": "Enter the serial port to use for upload/monitor, for example COM3"
+    },
+    {
+      "id": "cppExtraFlags",
+      "type": "promptString",
+      "description": "Optional extra value for compiler.cpp.extra_flags, for example -DHALF_STEP",
+      "default": ""
+    }
+  ]
+}

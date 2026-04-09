@@ -1,0 +1,14 @@
+{
+  "files.associations": {
+    "*.ino": "cpp"
+  },
+  "C_Cpp.errorSquiggles": "enabled",
+  "files.exclude": {
+    "**/.arduino": true,
+    "**/docs/build": true
+  },
+  "search.exclude": {
+    "**/.arduino": true,
+    "**/docs/build": true
+  }
+}
