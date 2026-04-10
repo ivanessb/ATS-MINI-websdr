@@ -278,10 +278,10 @@ void wifiSetupHandleEncoder(int16_t enc)
     case WIFISETUP_PASSWORD:
     {
       // Scroll through characters + action buttons
-      pwCharIdx = ((int)pwCharIdx + enc);
-      // Wrap around within total items
+      // Use int to avoid uint8_t underflow when wrapping below 0
+      int idx = (int)pwCharIdx + enc;
       int total = PW_TOTAL_ITEMS;
-      pwCharIdx = ((int)pwCharIdx % total + total) % total;
+      pwCharIdx = ((idx % total) + total) % total;
       break;
     }
 
@@ -672,9 +672,9 @@ void wifiSetupDraw()
         else if (ci == PW_ACTION_OK)
           label = "OK";
         else if (ci == PW_ACTION_BACK)
-          label = "\x1b"; // left arrow = back
+          label = "CA";
         else if (ci == PW_ACTION_BKSP)
-          label = "\x11"; // backspace symbol
+          label = "DE";
 
         if (i == 0)
         {
