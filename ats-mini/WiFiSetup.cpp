@@ -44,12 +44,12 @@ static uint8_t pwLen      = 0;
 static uint8_t pwCharIdx  = 0;       // Index into character set
 static bool    pwConfirm  = false;   // true when cursor is on OK/Back
 
-// Character set for password entry
+// Character set for password entry (common chars only)
 static const char pwChars[] =
   "abcdefghijklmnopqrstuvwxyz"
   "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
   "0123456789"
-  " !@#$%^&*()-_=+[]{}|;:',.<>?/~`\"\\";
+  " _.-@#$!+";
 
 static const int pwCharsCount = sizeof(pwChars) - 1; // exclude null terminator
 
@@ -246,6 +246,9 @@ static void enterPassword(const String &ssid)
 void wifiSetupHandleEncoder(int16_t enc)
 {
   if (!enc) return;
+
+  // Clamp to ±1 so fast rotation doesn't skip over buttons
+  enc = (enc > 0) ? 1 : -1;
 
   switch (wsState)
   {

@@ -2,8 +2,10 @@
 #include "WebSdrAudio.h"
 #include "PwmAudio.h"
 #include "Common.h"
+#include "Storage.h"
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <WiFiClient.h>
 #include <esp_wifi.h>
 #include <lwip/sockets.h>
@@ -84,6 +86,7 @@ static uint32_t    reconnectTime  = 0;
 static uint32_t    lastKeepalive  = 0;
 static bool        wsUpgraded     = false;
 static bool        audioStarted   = false;
+static bool        wsdrWifiWasOff = false;  // Track if we enabled WiFi for WebSDR
 
 // Tune throttle state
 static uint32_t    lastTuneSent   = 0;
@@ -918,17 +921,35 @@ void webSdrEnterMode(void)
   // Auto-connect to WiFi if not already connected
   if (WiFi.status() != WL_CONNECTED)
   {
-    Serial.println("WebSDR: connecting to WiFi...");
+    wsdrWifiWasOff = (WiFi.getMode() == WIFI_MODE_NULL);
+    Serial.println("WebSDR: connecting to WiFi using saved networks...");
     WiFi.mode(WIFI_STA);
-    WiFi.begin("Pixel_5449", "1234567890");
 
-    uint32_t t0 = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - t0 < 10000)
+    // Load saved networks from NVS and add to WiFiMulti
+    WiFiMulti wifiMultiLocal;
+    bool haveAP = false;
+
+    prefs.begin("network", true, STORAGE_PARTITION);
+    for (int j = 0; j < 3; j++)
     {
-      delay(100);
+      char nameSSID[16], namePASS[16];
+      sprintf(nameSSID, "wifissid%d", j + 1);
+      sprintf(namePASS, "wifipass%d", j + 1);
+      String ssid = prefs.getString(nameSSID, "");
+      String pass = prefs.getString(namePASS, "");
+      if (ssid.length() > 0)
+      {
+        wifiMultiLocal.addAP(ssid.c_str(), pass.c_str());
+        haveAP = true;
+      }
     }
+    prefs.end();
 
-    if (WiFi.status() == WL_CONNECTED)
+    if (!haveAP)
+    {
+      Serial.println("WebSDR: no saved WiFi networks, cannot connect");
+    }
+    else if (wifiMultiLocal.run(10000) == WL_CONNECTED)
     {
       Serial.printf("WebSDR: WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());
 
@@ -1006,6 +1027,15 @@ void webSdrExitMode(void)
 
   // Restore SI4732 analog audio
   rx.setAudioMute(false);
+
+  // If WiFi was off before WebSDR, turn it off again
+  if (wsdrWifiWasOff)
+  {
+    WiFi.disconnect(true);
+    WiFi.mode(WIFI_MODE_NULL);
+    wsdrWifiWasOff = false;
+    Serial.println("WebSDR: WiFi restored to off");
+  }
 }
 
 bool webSdrIsActive(void)
