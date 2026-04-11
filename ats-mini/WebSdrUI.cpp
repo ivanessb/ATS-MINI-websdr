@@ -216,6 +216,29 @@ static void drawConnDot(int x, int y, WebSdrConnectionState cs)
   spr.drawString(str, x + 6, y);
 }
 
+static void drawLoadingBar(int x, int y, int w, int h, int progress, const char *label)
+{
+  if (progress < 0) progress = 0;
+  if (progress > 100) progress = 100;
+
+  spr.setTextDatum(TL_DATUM);
+  spr.setTextFont(1);
+  spr.setTextColor(TH.text_muted, TH.bg);
+  spr.drawString(label, x, y - 10);
+
+  spr.drawRect(x, y, w, h, COL_BTN_BORDER);
+  int fillW = (w - 2) * progress / 100;
+  if (fillW > 0)
+    spr.fillRect(x + 1, y + 1, fillW, h - 2, COL_BTN_ACTIVE);
+
+  char pbuf[8];
+  snprintf(pbuf, sizeof(pbuf), "%d%%", progress);
+  spr.setTextDatum(TR_DATUM);
+  spr.setTextColor(TFT_CYAN, TH.bg);
+  spr.drawString(pbuf, x + w, y - 10);
+  spr.setTextDatum(TL_DATUM);
+}
+
 // ---------------------------------------------------------------------------
 // S-meter bar
 // ---------------------------------------------------------------------------
@@ -355,11 +378,27 @@ void drawWebSdrScreen(void)
 
   {
     char buf[64];
-    snprintf(buf, sizeof(buf), "PWM %u  DEC %u  UND %lu  RX %lukB",
-             (unsigned)pwmAudioGetBufferedBytes(),
-             (unsigned)webSdrAudioAvailable(),
-             (unsigned long)st->audioUnderruns,
-             (unsigned long)(st->bytesReceived / 1024));
+    if (st->connState != WEBSDR_STATE_STREAMING)
+    {
+      const char *stage = "Preparing...";
+      if (st->connState == WEBSDR_STATE_CONNECTING) stage = "Connecting WiFi/TCP...";
+      else if (st->connState == WEBSDR_STATE_HANDSHAKE) stage = "Negotiating stream...";
+      else if (st->connState == WEBSDR_STATE_RECONNECT_WAIT) stage = "Reconnecting...";
+      else if (st->connState == WEBSDR_STATE_ERROR) stage = "Connection error";
+
+      int load = webSdrGetLoadingProgress();
+      drawLoadingBar(4, 105, 312, 8, load, stage);
+      snprintf(buf, sizeof(buf), "Waiting for stream...");
+    }
+    else
+    {
+      snprintf(buf, sizeof(buf), "PWM %u  DEC %u  UND %lu  RX %lukB",
+               (unsigned)pwmAudioGetBufferedBytes(),
+               (unsigned)webSdrAudioAvailable(),
+               (unsigned long)st->audioUnderruns,
+               (unsigned long)(st->bytesReceived / 1024));
+    }
+
     spr.setTextColor(TH.text_muted, TH.bg);
     spr.drawString(buf, 4, 104);
   }

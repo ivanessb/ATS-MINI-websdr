@@ -87,6 +87,9 @@ static uint32_t    lastKeepalive  = 0;
 static bool        wsUpgraded     = false;
 static bool        audioStarted   = false;
 static bool        wsdrWifiWasOff = false;  // Track if we enabled WiFi for WebSDR
+static WiFiMulti   wsdrWifiMulti;
+static bool        wsdrHaveSavedAps = false;
+static uint32_t    wsdrWifiStartMs = 0;
 
 // Tune throttle state
 static uint32_t    lastTuneSent   = 0;
@@ -642,33 +645,65 @@ static void webSdrNetworkTask(void *param)
     switch (state.connState)
     {
       case WEBSDR_STATE_IDLE:
-      {
         state.connState = WEBSDR_STATE_CONNECTING;
+        break;
 
-        if (doConnect())
+      case WEBSDR_STATE_CONNECTING:
+      {
+        // Step 1/3: connect station WiFi first (non-blocking)
+        if (WiFi.status() != WL_CONNECTED)
         {
-          state.connState = WEBSDR_STATE_HANDSHAKE;
+          if (!wsdrHaveSavedAps)
+          {
+            Serial.println("WebSDR: no saved WiFi networks");
+            state.loadingProgress = 100;
+            state.connState = WEBSDR_STATE_ERROR;
+            break;
+          }
 
-          if (doHandshake())
+          uint8_t wifiSt = wsdrWifiMulti.run(200);
+          uint32_t elapsed = millis() - wsdrWifiStartMs;
+          uint8_t wifiProg = 20 + (uint8_t)((elapsed / 200) % 30);  // animate 20..49
+          state.loadingProgress = wifiProg;
+
+          if (wifiSt != WL_CONNECTED)
           {
-            state.connState = WEBSDR_STATE_STREAMING;
-            vTaskDelay(pdMS_TO_TICKS(500));  // Allow server to stabilize
-            sendTuneCommand();               // Initial tune (direct, we're on Core 0)
-            lastKeepalive = millis();
-            audioStarted = false;
-            Serial.println("WebSDR: streaming started");
+            vTaskDelay(pdMS_TO_TICKS(80));
+            break;
           }
-          else
-          {
-            tcpClient.stop();
-            state.reconnectCount++;
-            state.connState = WEBSDR_STATE_RECONNECT_WAIT;
-            reconnectTime = millis();
-          }
+
+          Serial.printf("WebSDR: WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());
+          esp_wifi_set_ps(WIFI_PS_NONE);
+          state.loadingProgress = 55;
+        }
+
+        // Step 2/3: TCP connection
+        state.loadingProgress = 70;
+        if (!doConnect())
+        {
+          state.connectFailures++;
+          state.reconnectCount++;
+          state.connState = WEBSDR_STATE_RECONNECT_WAIT;
+          reconnectTime = millis();
+          break;
+        }
+
+        // Step 3/3: WS handshake
+        state.connState = WEBSDR_STATE_HANDSHAKE;
+        state.loadingProgress = 85;
+        if (doHandshake())
+        {
+          state.connState = WEBSDR_STATE_STREAMING;
+          state.loadingProgress = 100;
+          vTaskDelay(pdMS_TO_TICKS(500));  // Allow server to stabilize
+          sendTuneCommand();               // Initial tune (direct, we're on Core 0)
+          lastKeepalive = millis();
+          audioStarted = false;
+          Serial.println("WebSDR: streaming started");
         }
         else
         {
-          state.connectFailures++;
+          tcpClient.stop();
           state.reconnectCount++;
           state.connState = WEBSDR_STATE_RECONNECT_WAIT;
           reconnectTime = millis();
@@ -731,11 +766,13 @@ static void webSdrNetworkTask(void *param)
       }
 
       case WEBSDR_STATE_RECONNECT_WAIT:
+        state.loadingProgress = 35;
         if (millis() - reconnectTime > WEBSDR_RECONNECT_DELAY_MS)
         {
           webSdrAudioReset();
           audioStarted = false;
           wsUpgraded = false;
+          wsdrWifiStartMs = millis();
           state.connState = WEBSDR_STATE_IDLE;
         }
         else
@@ -763,6 +800,7 @@ bool webSdrInit(void)
 {
   memset(&state, 0, sizeof(state));
   state.connState    = WEBSDR_STATE_DISABLED;
+  state.loadingProgress = 0;
   state.selectedServer = 0;
   state.currentBand  = 3;  // Default: 40m band
   state.currentFreq  = 70770;  // Default 7077.0 kHz (0.1 kHz units)
@@ -879,6 +917,7 @@ const WebSdrBand   *webSdrGetBandDef(int idx)  { return (idx >= 0 && idx < (int)
 uint32_t webSdrGetReconnectCount(void)      { return state.reconnectCount; }
 uint32_t webSdrGetUnknownFrameCount(void)   { return state.unknownFrames; }
 uint32_t webSdrGetDecodeErrorCount(void)    { return webSdrAudioGetDecodeErrorCount(); }
+uint8_t webSdrGetLoadingProgress(void)      { return state.loadingProgress; }
 
 // ---------------------------------------------------------------------------
 // Task — called from main loop, drives the state machine
@@ -918,51 +957,37 @@ void webSdrEnterMode(void)
 {
   Serial.println("WebSDR: entering mode (dual-core)");
 
-  // Auto-connect to WiFi if not already connected
+  state.loadingProgress = 5;
+
+  // Prepare WiFiMulti inputs (actual connect is done asynchronously in network task)
+  wsdrWifiMulti.APlistClean();
+  wsdrHaveSavedAps = false;
+  wsdrWifiStartMs = millis();
+
+  wsdrWifiWasOff = (WiFi.getMode() == WIFI_MODE_NULL);
   if (WiFi.status() != WL_CONNECTED)
   {
-    wsdrWifiWasOff = (WiFi.getMode() == WIFI_MODE_NULL);
-    Serial.println("WebSDR: connecting to WiFi using saved networks...");
+    Serial.println("WebSDR: preparing saved WiFi networks...");
     WiFi.mode(WIFI_STA);
+  }
 
-    // Load saved networks from NVS and add to WiFiMulti
-    WiFiMulti wifiMultiLocal;
-    bool haveAP = false;
-
-    prefs.begin("network", true, STORAGE_PARTITION);
-    for (int j = 0; j < 3; j++)
+  prefs.begin("network", true, STORAGE_PARTITION);
+  for (int j = 0; j < 3; j++)
+  {
+    char nameSSID[16], namePASS[16];
+    sprintf(nameSSID, "wifissid%d", j + 1);
+    sprintf(namePASS, "wifipass%d", j + 1);
+    String ssid = prefs.getString(nameSSID, "");
+    String pass = prefs.getString(namePASS, "");
+    if (ssid.length() > 0)
     {
-      char nameSSID[16], namePASS[16];
-      sprintf(nameSSID, "wifissid%d", j + 1);
-      sprintf(namePASS, "wifipass%d", j + 1);
-      String ssid = prefs.getString(nameSSID, "");
-      String pass = prefs.getString(namePASS, "");
-      if (ssid.length() > 0)
-      {
-        wifiMultiLocal.addAP(ssid.c_str(), pass.c_str());
-        haveAP = true;
-      }
-    }
-    prefs.end();
-
-    if (!haveAP)
-    {
-      Serial.println("WebSDR: no saved WiFi networks, cannot connect");
-    }
-    else if (wifiMultiLocal.run(10000) == WL_CONNECTED)
-    {
-      Serial.printf("WebSDR: WiFi connected, IP %s\n", WiFi.localIP().toString().c_str());
-
-      // Disable WiFi power save — prevents 100-300ms receive stalls
-      // that drain the audio buffer during modem sleep wake-up
-      esp_wifi_set_ps(WIFI_PS_NONE);
-      Serial.println("WebSDR: WiFi power save disabled");
-    }
-    else
-    {
-      Serial.println("WebSDR: WiFi connection failed");
+      wsdrWifiMulti.addAP(ssid.c_str(), pass.c_str());
+      wsdrHaveSavedAps = true;
     }
   }
+  prefs.end();
+
+  state.loadingProgress = (WiFi.status() == WL_CONNECTED) ? 55 : 20;
 
   // Initialize audio decode pipeline
   webSdrAudioInit();
@@ -1000,6 +1025,7 @@ void webSdrExitMode(void)
   Serial.println("WebSDR: exiting mode");
 
   state.enabled = false;
+  state.loadingProgress = 0;
 
   // Stop network task first (waits for Core 0 task to finish)
   if (networkTaskHandle)
@@ -1036,6 +1062,9 @@ void webSdrExitMode(void)
     wsdrWifiWasOff = false;
     Serial.println("WebSDR: WiFi restored to off");
   }
+
+  wsdrWifiMulti.APlistClean();
+  wsdrHaveSavedAps = false;
 }
 
 bool webSdrIsActive(void)

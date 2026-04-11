@@ -88,6 +88,7 @@ typedef struct
 {
   bool     enabled;           // Feature is active (user entered WebSDR mode)
   WebSdrConnectionState connState;
+  uint8_t  loadingProgress;   // UI progress while connecting (0..100)
 
   int      selectedServer;    // Index into server table
   int      currentBand;       // Index into band table
@@ -190,6 +191,9 @@ void webSdrExitMode(void);
 
 // Returns true if WebSDR mode is currently active.
 bool webSdrIsActive(void);
+
+// Returns loading status (0..100) while WebSDR is connecting.
+uint8_t webSdrGetLoadingProgress(void);
 
 #ifdef __cplusplus
 }

@@ -44,6 +44,15 @@ static uint8_t pwLen      = 0;
 static uint8_t pwCharIdx  = 0;       // Index into character set
 static bool    pwConfirm  = false;   // true when cursor is on OK/Back
 
+// Connect/disconnect feedback
+static String   wsStatusText;
+static uint32_t wsStatusUntil = 0;
+static bool     wsConnDisconnect = false;
+static int      wsConnSlot = -1;
+static uint32_t wsConnStartMs = 0;
+
+#define WIFISETUP_CONN_TIMEOUT_MS 10000
+
 // Character set for password entry (common chars only)
 static const char pwChars[] =
   "abcdefghijklmnopqrstuvwxyz"
@@ -58,6 +67,89 @@ static const int pwCharsCount = sizeof(pwChars) - 1; // exclude null terminator
 #define PW_ACTION_BACK  (pwCharsCount + 1)
 #define PW_ACTION_BKSP  (pwCharsCount + 2)
 #define PW_TOTAL_ITEMS  (pwCharsCount + 3)
+
+static void setStatusText(const char *msg)
+{
+  wsStatusText = msg;
+  wsStatusUntil = millis() + 2500;
+}
+
+static void beginConnectSavedSlot(int slot)
+{
+  if (slot < 0 || slot >= MAX_SAVED) return;
+  if (savedSSID[slot].length() == 0) return;
+
+  wsConnDisconnect = false;
+  wsConnSlot = slot;
+  wsConnStartMs = millis();
+
+  // Ensure STA interface is available before begin().
+  // If AP is active, keep it by switching to AP+STA.
+  wifi_mode_t mode = WiFi.getMode();
+  if (mode == WIFI_MODE_NULL)
+    WiFi.mode(WIFI_STA);
+  else if (mode == WIFI_MODE_AP)
+    WiFi.mode(WIFI_AP_STA);
+
+  // Start from a clean station state.
+  WiFi.disconnect(false, true);
+
+  WiFi.begin(savedSSID[slot].c_str(), savedPass[slot].c_str());
+  wsState = WIFISETUP_CONNECTING;
+}
+
+static void beginDisconnectCurrent()
+{
+  wsConnDisconnect = true;
+  wsConnSlot = -1;
+  wsConnStartMs = millis();
+
+  WiFi.disconnect(false, true);
+  wsState = WIFISETUP_CONNECTING;
+}
+
+static void updateConnectAction()
+{
+  if (wsState != WIFISETUP_CONNECTING) return;
+
+  wl_status_t st = WiFi.status();
+
+  if (wsConnDisconnect)
+  {
+    if (st != WL_CONNECTED)
+    {
+      setStatusText("WiFi disconnected");
+      wsState = WIFISETUP_LIST;
+      wsCursor = 0;
+      return;
+    }
+  }
+  else
+  {
+    if (st == WL_CONNECTED)
+    {
+      setStatusText("WiFi connected");
+      wsState = WIFISETUP_LIST;
+      wsCursor = 0;
+      return;
+    }
+
+    if (st == WL_CONNECT_FAILED || st == WL_NO_SSID_AVAIL)
+    {
+      setStatusText("Connect failed");
+      wsState = WIFISETUP_LIST;
+      wsCursor = 0;
+      return;
+    }
+  }
+
+  if ((millis() - wsConnStartMs) > WIFISETUP_CONN_TIMEOUT_MS)
+  {
+    setStatusText(wsConnDisconnect ? "Disconnect timeout" : "Connect failed");
+    wsState = WIFISETUP_LIST;
+    wsCursor = 0;
+  }
+}
 
 // -----------------------------------------------------------------------
 // Load saved networks from NVS
@@ -126,25 +218,6 @@ static bool saveNetwork(const String &ssid, const String &pass)
 }
 
 // -----------------------------------------------------------------------
-// Forget a saved network by slot index
-// -----------------------------------------------------------------------
-static void forgetNetwork(int slot)
-{
-  if (slot < 0 || slot >= MAX_SAVED) return;
-
-  savedSSID[slot] = "";
-  savedPass[slot] = "";
-
-  prefs.begin("network", false, STORAGE_PARTITION);
-  char nameSSID[16], namePASS[16];
-  sprintf(nameSSID, "wifissid%d", slot + 1);
-  sprintf(namePASS, "wifipass%d", slot + 1);
-  prefs.putString(nameSSID, "");
-  prefs.putString(namePASS, "");
-  prefs.end();
-}
-
-// -----------------------------------------------------------------------
 // Enter / exit WiFi setup mode
 // -----------------------------------------------------------------------
 void wifiSetupEnter()
@@ -153,6 +226,8 @@ void wifiSetupEnter()
   wsExitReq = false;
   wsState   = WIFISETUP_LIST;
   wsCursor  = 0;
+  wsStatusText = "";
+  wsStatusUntil = 0;
   loadSavedNetworks();
 }
 
@@ -161,6 +236,8 @@ void wifiSetupExit()
   wsActive  = false;
   wsExitReq = false;
   wsState   = WIFISETUP_LIST;
+  wsConnDisconnect = false;
+  wsConnSlot = -1;
   // Clean up any ongoing scan
   WiFi.scanDelete();
 }
@@ -285,6 +362,10 @@ void wifiSetupHandleEncoder(int16_t enc)
       break;
     }
 
+    case WIFISETUP_CONNECTING:
+      // Keep input inactive while action is in progress
+      break;
+
     default:
       break;
   }
@@ -306,10 +387,11 @@ void wifiSetupHandleClick()
         if (savedSSID[j].length() == 0) continue;
         if (wsCursor == idx)
         {
-          // Clicking a saved network — forget it
-          forgetNetwork(j);
-          loadSavedNetworks();
-          wsCursor = 0;
+          bool isConnected = (WiFi.status() == WL_CONNECTED && WiFi.SSID() == savedSSID[j]);
+          if (isConnected)
+            beginDisconnectCurrent();
+          else
+            beginConnectSavedSlot(j);
           return;
         }
         idx++;
@@ -466,6 +548,8 @@ static void drawSignalBars(int x, int y, int32_t rssiVal, bool selected)
 // -----------------------------------------------------------------------
 void wifiSetupDraw()
 {
+  updateConnectAction();
+
   switch (wsState)
   {
     // ----- Saved Networks List -----
@@ -482,7 +566,7 @@ void wifiSetupDraw()
         if (savedSSID[j].length() == 0) continue;
 
         bool connected = (WiFi.status() == WL_CONNECTED && WiFi.SSID() == savedSSID[j]);
-        const char *status = connected ? "Connected" : "Forget";
+        const char *status = connected ? "Disconnect" : "Connect";
 
         drawListItem(y, savedSSID[j].c_str(), wsCursor == idx, status);
         y += 20;
@@ -507,7 +591,10 @@ void wifiSetupDraw()
       // Hint at bottom
       spr.setTextDatum(BC_DATUM);
       spr.setTextColor(TH.menu_item, TH.bg);
-      spr.drawString("Click saved network to forget", 160, 166, 1);
+      if (wsStatusText.length() > 0 && millis() < wsStatusUntil)
+        spr.drawString(wsStatusText.c_str(), 160, 166, 1);
+      else
+        spr.drawString("Click saved network to connect/disconnect", 160, 166, 1);
       break;
     }
 
@@ -694,7 +781,6 @@ void wifiSetupDraw()
       int btnY   = 100;
       int btnW   = 80;
       int btnH   = 24;
-      int btnGap = 10;
 
       // [Backspace] button
       {
@@ -733,6 +819,45 @@ void wifiSetupDraw()
       spr.setTextDatum(BC_DATUM);
       spr.setTextColor(TH.menu_item, TH.bg);
       spr.drawString("Rotate=char  Click=add  Buttons=action", 160, 166, 1);
+      break;
+    }
+
+    // ----- Connect/Disconnect Progress -----
+    case WIFISETUP_CONNECTING:
+    {
+      drawTitle("WiFi Setup");
+
+      bool isDisc = wsConnDisconnect;
+      const char *line1 = isDisc ? "Disconnecting from WiFi..." : "Connecting to WiFi...";
+      spr.setTextDatum(MC_DATUM);
+      spr.setTextColor(TH.menu_item, TH.bg);
+      spr.drawString(line1, 160, 70, 2);
+
+      if (!isDisc && wsConnSlot >= 0 && wsConnSlot < MAX_SAVED)
+      {
+        spr.setTextColor(TH.menu_param, TH.bg);
+        spr.drawString(savedSSID[wsConnSlot].c_str(), 160, 90, 2);
+      }
+
+      uint32_t elapsed = millis() - wsConnStartMs;
+      int progress = (int)((elapsed * 100) / WIFISETUP_CONN_TIMEOUT_MS);
+      if (progress < 5) progress = 5;
+      if (progress > 100) progress = 100;
+
+      int barX = 20;
+      int barY = 112;
+      int barW = 280;
+      int barH = 14;
+      int fillW = (barW - 2) * progress / 100;
+
+      spr.drawRect(barX, barY, barW, barH, TH.menu_border);
+      if (fillW > 0)
+        spr.fillRect(barX + 1, barY + 1, fillW, barH - 2, TH.menu_hl_bg);
+
+      char pct[8];
+      sprintf(pct, "%d%%", progress);
+      spr.setTextColor(TH.menu_param, TH.bg);
+      spr.drawString(pct, 160, 138, 2);
       break;
     }
   }
