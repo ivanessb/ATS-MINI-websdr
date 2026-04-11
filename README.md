@@ -9,6 +9,12 @@ This is a fork of the [ATS-Mini](https://github.com/esp32-si4732/ats-mini) firmw
 ### WebSDR Client
 Listen to remote HF receivers over the internet directly from your pocket radio — no PC needed.
 
+IMPORTANT: WebSDR audio path requires hardware modification on many ATS-Mini boards.
+The firmware outputs audio using PWM, and PWM must pass through a low-pass filter before entering the speaker amplifier IC input.
+Without this filter, audio quality can be poor and high-frequency switching noise can leak into the amplifier.
+
+See the WebSDR PWM hardware note and schematic in [docs/source/hardware.md](docs/source/hardware.md).
+
 - Connects to the **Maasbree WebSDR** (Netherlands) via WiFi
 - **8 HF bands**: 160m, 80m, 60m, 40m, 30m, 20m, 17m, 15m
 - **5 modulation modes**: AM, LSB, USB, CW, FM
