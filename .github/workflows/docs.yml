@@ -38,9 +38,7 @@ jobs:
       - name: Install uv and python
         uses: astral-sh/setup-uv@v5
         with:
-          pyproject-file: "pyproject.toml"
           enable-cache: true
-          cache-dependency-glob: "**/pyproject.toml"
 
       # - name: Check the links
       #   run: |
@@ -49,11 +47,12 @@ jobs:
       - name: Compile the unreleased changelog
         run: |
           # shellcheck disable=SC2015
-          ls changelog/*.md && uv run towncrier build --keep --version Unreleased || true
+          ls changelog/*.md && uv run --with towncrier towncrier build --keep --version Unreleased || true
 
       - name: Build the docs
         run: |
-          uv run sphinx-build --fail-on-warning --nitpicky docs/source docs/build
+          uv run --with sphinx --with myst-parser --with furo \
+            sphinx-build --fail-on-warning --nitpicky docs/source docs/build
 
       - name: Upload the docs artifact
         id: artifact
